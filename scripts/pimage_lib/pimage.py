@@ -222,3 +222,35 @@ def extractLake(img_raw: np.ndarray):
     img_pol_mono = falseColoring(val_aolp_mono, value=val_DoLP_mono)
 
     return img_rgb, img_rgb_90, img_rgb_dif, img_mono, img_dolp_mono, img_pol_mono
+
+
+def extractDif(img_raw: np.ndarray):
+    """ Extract only the DIF channel given the RAW iamge
+
+    Parameters
+    ----------
+    img_raw : np.ndarray
+    Returns
+    img_rgb_dif: np.ndarray
+    -------
+
+    """
+    demosaiced_color = demosaicing(img_raw)
+
+    #demosaiced_mono = []
+    #for i in range(4):
+    #    demosaiced_mono.append(cv2.cvtColor(demosaiced_color[i], cv2.COLOR_BGR2GRAY))
+
+    #img_rgb = rgb(demosaiced_color)
+
+    #img_rgb_90 = demosaiced_color[2]
+
+    #img_mono = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY)
+
+    stokes_color = calcStokes(demosaiced_color)
+
+    img_rgb_dif = calcDiffuse(stokes_color)
+
+
+    return img_rgb_dif
+

@@ -1,0 +1,11 @@
+<launch>
+    <arg name="input_topic" default="/arena_camera_node/image_raw" />
+    <arg name="output_topic_image" default="/pimage/dif/image_raw" />
+    <arg name="output_topic_info" default="/pimage/dif/camera_info" />
+    <node name="dif_publisher" pkg="pimage_utils" type="dif_publisher.py" output="screen">
+        <remap from="input/image" to="$(arg input_topic)" />
+        <remap from="output/image" to="$(arg output_topic_image)" />
+        <remap from="output/camera_info" to="$(arg output_topic_info)" />
+    </node>
+</launch>
+
