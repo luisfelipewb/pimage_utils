@@ -1,0 +1,16 @@
+<launch>
+
+<!-- Start DIF publisher -->
+<include file="$(find pimage_utils)/launch/dif_publisher.launch" />
+
+<arg name="input_image" default="/pimage/dif/image_raw" />
+
+<node name="waste_detector" pkg="pimage_utils" type="waste_detector.py" output="screen">
+    <remap from="input_image" to="$(arg input_image)" />
+    <param name="engine" type="string" value="$(find pimage_utils)/config/freeze.engine" />
+    <param name="intrinsics_path" type="string" value="$(find pimage_utils)/config/ost.yaml" />
+    <param name="extrinsics_path" type="string" value="$(find pimage_utils)/config/camera_pose.yaml" />
+    <param name="confidence_thresh" type="double" value="0.01" />
+</node>
+
+</launch>
