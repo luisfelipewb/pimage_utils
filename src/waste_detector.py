@@ -18,7 +18,7 @@ import threading
 class WasteDetector:
     def __init__(self):
 
-        rospy.init_node('waste_detector', log_level=rospy.DEBUG)
+        rospy.init_node('waste_detector', log_level=rospy.INFO)
 
         self.bridge = CvBridge()
 
@@ -52,6 +52,7 @@ class WasteDetector:
         _, _, self.Z0 = self.cam_origin_w.flatten()
 
         self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
         self.img_input = None
         self.received_image = False
         self.img_header = None
@@ -231,47 +232,52 @@ class WasteDetector:
         self.detected_points_pub.publish(cloud_msg)
 
     def image_callback(self, msg):
-        rospy.logdebug('image_callback: Received image')
+        # rospy.logdebug('image_callback: Received image')
         # Preprocess image
         img = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
         img_input = self.preprocess_image(img)
 
-        with self.lock:
+        acquired = self.lock.acquire(timeout=0.1)
+        if not acquired:
+            rospy.logdebug('image_callback: Lock not acquired')
+            return
+        try:
             self.img_header = msg.header
             self.img = img
             self.img_input = img_input
             self.received_image = True
+            self.condition.notify()
+        finally:
+            self.lock.release()
 
     def inference_loop(self):
         rospy.logdebug('Starting inference loop')
         while not rospy.is_shutdown():
-            time.sleep(0.01) # Might introdcue delay
-            process_image = False
             with self.lock:
-                if self.received_image:
-                    img_input = self.img_input
-                    self.received_image = False
-                    img_header = self.img_header
-                    img = self.img
-                    process_image = True
-            if process_image:
-                inference_output = self.run_inference(img_input)
+                while not self.received_image:
+                    self.condition.wait()
+                img_input = self.img_input
+                self.received_image = False
+                img_header = self.img_header
+                img = self.img
 
-                # Threshold detections and NMS
-                XcYcWH_boxes, XYXY_boxes = self.postprocess_output(inference_output)
+            inference_output = self.run_inference(img_input)
 
-                num_detections = len(XcYcWH_boxes)
-                rospy.logdebug(f"Detected {num_detections} objects")
+            # Threshold detections and NMS
+            XcYcWH_boxes, XYXY_boxes = self.postprocess_output(inference_output)
 
-                center_positions = XcYcWH_boxes[:,:2] # get only XcYc positions
-                coordinates = self.project_to_world(center_positions)
-                self.publish_pointcloud(coordinates, img_header)
+            # num_detections = len(XcYcWH_boxes)
+            # rospy.logdebug(f"Detected {num_detections} objects")
 
-                if self.annotated_image_pub.get_num_connections() > 0:
-                    labeled_image = self.draw_boxes_on_image(img, XcYcWH_boxes, XYXY_boxes, color=(0, 255, 0), marker_color=(0, 0, 255))
-                    labeled_image_msg = self.bridge.cv2_to_imgmsg(labeled_image, "passthrough")
-                    labeled_image_msg.header = self.img_header
-                    self.annotated_image_pub.publish(labeled_image_msg)
+            center_positions = XcYcWH_boxes[:,:2] # get only XcYc positions
+            coordinates = self.project_to_world(center_positions)
+            self.publish_pointcloud(coordinates, img_header)
+
+            if self.annotated_image_pub.get_num_connections() > 0:
+                labeled_image = self.draw_boxes_on_image(img, XcYcWH_boxes, XYXY_boxes, color=(0, 255, 0), marker_color=(0, 0, 255))
+                labeled_image_msg = self.bridge.cv2_to_imgmsg(labeled_image, "passthrough")
+                labeled_image_msg.header = self.img_header
+                self.annotated_image_pub.publish(labeled_image_msg)
 
     def shutdown_hook(self):
         rospy.loginfo('Shutting down WasteDetector node')
