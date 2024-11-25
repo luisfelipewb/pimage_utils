@@ -210,8 +210,9 @@ class WasteDetector:
                 ray_direction_w = self.R_inv @ uv1
 
                 _, _, dz = ray_direction_w.flatten()
-                if abs(dz) < 0.00001: 
-                    raise ValueError("parallel to z=0")
+                if dz > 0.00001:
+                    rospy.logwarn("Skipping point higher than horizon")
+                    continue
                 t = -self.Z0 / dz
 
                 intersection_point = self.cam_origin_w + t * ray_direction_w

@@ -7,10 +7,10 @@
 
 <node name="waste_detector" pkg="pimage_utils" type="waste_detector.py" output="screen">
     <remap from="input_image" to="$(arg input_image)" />
-    <param name="engine" type="string" value="$(find pimage_utils)/config/freeze.engine" />
+    <param name="engine" type="string" value="$(find pimage_utils)/config/best.engine" />
     <param name="intrinsics_path" type="string" value="$(find pimage_utils)/config/ost.yaml" />
     <param name="extrinsics_path" type="string" value="$(find pimage_utils)/config/camera_pose.yaml" />
-    <param name="confidence_thresh" type="double" value="0.01" />
+    <param name="confidence_thresh" type="double" value="0.6" />
 </node>
 
 </launch>
