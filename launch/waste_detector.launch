@@ -13,4 +13,7 @@
     <param name="confidence_thresh" type="double" value="0.6" />
 </node>
 
+<!-- goal publisher  (pcl2goal) -->
+<node name="goal_publisher" pkg="kingfisher_rl" type="goal_publisher.py" output="screen" />
+
 </launch>
