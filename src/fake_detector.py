@@ -16,7 +16,7 @@ from cv_bridge import CvBridge
 class FakeDetector:
     def __init__(self):
         rospy.init_node('fake_detector', log_level=rospy.INFO)
-        
+
         self.image_size = (1224, 1024)  # (width, height)
         # Parameters
         # self.world_frame = rospy.get_param('~world_frame', 'world')
@@ -47,13 +47,13 @@ class FakeDetector:
 
         # Create a marker template
         self.fov_marker = self.create_fov_marker()
-        
+
         # Create an array of Stamped points
         self.waste_positions = []
-        
+
         self.bridge = CvBridge()
 
-        self.pixel_noise_radius = rospy.get_param('~pixel_noise_radius', 12)
+        self.pixel_noise_radius = rospy.get_param('~pixel_noise_radius', 10)
 
         self.tf_listener = tf.TransformListener()
         rospy.sleep(2.0)  # Allow time for the tf listener to initialize
@@ -92,7 +92,7 @@ class FakeDetector:
                                  [[self.image_size[0], offset]],
                                  ], dtype=np.float32)
 
-        # Convert to local frame 
+        # Convert to local frame
         local_points = self.project_to_local(image_points)
 
         # Create a list of Point objects
@@ -109,34 +109,32 @@ class FakeDetector:
             intrinsics = yaml.safe_load(f)
         with open(extrinsics_path, 'r') as f:
             extrinsics = yaml.safe_load(f)
-        
+
         camera_matrix = np.array(intrinsics['camera_matrix']['data']).reshape(3,3)
         dist_coeffs = np.array(intrinsics['distortion_coefficients']['data']).reshape(1,5)
         rvec = np.array(extrinsics['rvec'])
         tvec = np.array(extrinsics['tvec'])
 
         return camera_matrix, dist_coeffs, rvec, tvec
-    
+
     def publish_debug_image(self, gt_points, noisy_points):
 
         image = np.ones((self.image_size[1], self.image_size[0], 3), dtype=np.uint8) * 255
+        # Circle for ground truth points
         for point in gt_points:
             cv2.circle(image, (int(point[0][0]), int(point[0][1])), self.pixel_noise_radius, (255, 0, 0), 2)
-
+        # Crosshair for noisy positions
         for point in noisy_points:
-            # Add crosshair
             cv2.drawMarker(image, (int(point[0][0]), int(point[0][1])), (173, 127, 168), markerType=cv2.MARKER_CROSS, markerSize=10, thickness=2)
-        
-        # print(image.shape)
+
         image_msg = self.bridge.cv2_to_imgmsg(image, encoding="bgr8")
         image_msg.header.frame_id = self.robot_frame
         image_msg.header.stamp = rospy.Time.now()
         image_msg.width = self.image_size[0]
         image_msg.height = self.image_size[1]
         image_msg.step = self.image_size[0] * 3
-        
         self.annotated_image_pub.publish(image_msg)
-        # Also publish camera info 
+
         camera_info_msg = CameraInfo()
         camera_info_msg.header = image_msg.header
         camera_info_msg.width = self.image_size[0]
@@ -150,13 +148,15 @@ class FakeDetector:
         return
 
     def project_to_image(self, points):
-        """ Project 3D points to 2D image coordinates 
-        retunrs the points in image coordinates"""
+        """ Project 3D points to 2D image coordinates
+        returns the points in image coordinates"""
 
         robot_points = np.array([[p.point.x, p.point.y, p.point.z] for p in points], dtype=np.float32)
 
         robot_points = robot_points[robot_points[:, 0] > 0] # Drop points behind the robot
 
+        if len(robot_points) == 0:
+            return []
         image_points, _ = cv2.projectPoints(robot_points, self.rvec, self.tvec, self.camera_matrix, self.dist_coeffs)
 
         # Filter points within the image size
@@ -165,31 +165,32 @@ class FakeDetector:
         image_points = image_points[image_points[:, 0, 1] >= 0]
         image_points = image_points[image_points[:, 0, 1] < self.image_size[1]]
 
-        # Create image and publish it for debugging 
-        
+        # Create image and publish it for debugging
+
         return image_points
-    
+
     def project_to_local(self, uv_points):
         """ Project from u,v pixel coordinates to x,y,0 point in the local (robot) frame """
 
+        if len(uv_points) == 0:
+            return []
+
+        # Convert to a float array expected by cv2
+        # uv_points = np.array([uv_points], dtype=np.float32)
+        points_undistorted = cv2.undistortPoints(uv_points, self.camera_matrix, self.dist_coeffs)
+
         local_coordinates = []
+        for uv_point in points_undistorted:
+            uv1 = np.array([[uv_point[0][0], uv_point[0][1], 1]], dtype=np.float32).T
+            ray_direction_w = self.R_inv @ uv1
 
-        if len(uv_points > 0):
-            # Convert to a float array expected by cv2
-            # uv_points = np.array([uv_points], dtype=np.float32)
-            points_undistorted = cv2.undistortPoints(uv_points, self.camera_matrix, self.dist_coeffs)
+            _, _, dz = ray_direction_w.flatten()
+            if abs(dz) < 0.00001:
+                raise ValueError("parallel to z=0")
+            t = (-self.Z0) / dz
 
-            for uv_point in points_undistorted:
-                uv1 = np.array([[uv_point[0][0], uv_point[0][1], 1]], dtype=np.float32).T
-                ray_direction_w = self.R_inv @ uv1
-
-                _, _, dz = ray_direction_w.flatten()
-                if abs(dz) < 0.00001: 
-                    raise ValueError("parallel to z=0")
-                t = (-self.Z0 -0.15) / dz # There might be a difference of camera hight (water plane=0) from calibration and gazebo.
-
-                intersection_point = self.cam_origin_w + t * ray_direction_w
-                local_coordinates.append(intersection_point.flatten())
+            intersection_point = self.cam_origin_w + t * ray_direction_w
+            local_coordinates.append(intersection_point.flatten())
         return local_coordinates
 
 
@@ -198,11 +199,8 @@ class FakeDetector:
         # skip if image_coordinates is empty
         if len(image_coordinates) == 0:
             return []
-        # print(image_coordinates)
-        # print(image_coordinates[0])
         noisy_coordinates = np.array(image_coordinates, dtype=np.float32)
         for i in range(image_coordinates.shape[0]): # TODO: convert to vecotrized operation
-            # print(f"Coordinate: {coordinate}")
             # Add noise to the point
             # Circle around the position
             noise_radius = random.uniform(0, self.pixel_noise_radius)
@@ -217,7 +215,7 @@ class FakeDetector:
         noisy_coordinates = np.clip(noisy_coordinates, 0, [self.image_size[0], self.image_size[1]])
 
         return noisy_coordinates
-    
+
     def stamped_point_to_pcl2(self, stamped_points):
 
         header = stamped_points[0].header
@@ -234,7 +232,7 @@ class FakeDetector:
             PointField('y', 4, PointField.FLOAT32, 1),
             PointField('z', 8, PointField.FLOAT32, 1)
         ]
-        
+
         points = [
             [point.point.x, point.point.y, point.point.z]
             for point in stamped_points
@@ -244,8 +242,23 @@ class FakeDetector:
 
         return cloud_msg
 
+
+    def false_negative_filter(self, detections):
+        # Add a filter to remove false negatives based on distance
+
+
+        for i, point in reversed(list(enumerate(detections))):
+            # Compute the distance from the robot to the point
+            dist = np.sqrt(point.point.x**2 + point.point.y**2)
+            # Chance of dropping a point based on distance:
+            p_drop = (1 / (1 + np.exp(-(0.4 * dist - 3 )))) ** 0.99
+            if random.random() < p_drop:
+                detections.pop(i)
+
+        return detections
+
     def waste_callback(self, msg):
-        
+
         # Skip if the message is empty
         if not msg.markers:
             return
@@ -278,24 +291,15 @@ class FakeDetector:
         for point in waste_positions:
             local_waste_positions.append(self.tf_listener.transformPoint(self.robot_frame, point))
 
-
-        # print(f"Transformed waste positions: {local_waste_positions}")
         image_points = self.project_to_image(local_waste_positions)
-        # print(f"Image points type {type(image_points)} shape {image_points.shape} \n{image_points}\n")
 
         noisy_image_points = self.add_detection_noise(image_points)
 
         self.publish_debug_image(image_points, noisy_image_points)
 
         local_coordinates = self.project_to_local(noisy_image_points)
-        # print(f"Local coordinates: type:{type(local_coordinates)} {local_coordinates}\n")
 
-
-        # print(f"Image points: type:{type(image_points)} shape:{image_points.shape}\n{image_points}\n")
-        # print(f"Noisy image points: type:{type(noisy_image_points)} shape:{noisy_image_points.shape}\n{noisy_image_points}\n\n")
-
-        
-        # Create an array of stamped points
+        # Use stamped point to fill the PointCloud2 message
         detections = []
         for i, point in enumerate(local_coordinates):
             stamped_point = PointStamped()
@@ -305,11 +309,14 @@ class FakeDetector:
             stamped_point.header.frame_id = self.robot_frame
             stamped_point.header.stamp = stamp
             detections.append(stamped_point)
-        
-        point_cloud = self.stamped_point_to_pcl2(detections)
 
-        # Publish the point cloud and field of view
-        self.point_cloud_pub.publish(point_cloud)
+        # Drop points based on false positive change
+        detections = self.false_negative_filter(detections)
+
+        if len(detections) > 0:
+            point_cloud = self.stamped_point_to_pcl2(detections)
+            self.point_cloud_pub.publish(point_cloud)
+
         self.fov_pub.publish(self.fov_marker)
 
 

@@ -11,10 +11,11 @@ import threading
 class SimulatedWaste:
     def __init__(self):
         rospy.init_node('simulated_waste', log_level=rospy.INFO)
-        
+
         # Parameters
         self.frame_id = rospy.get_param('~frame_id', 'world')
         self.rate = rospy.get_param('~rate', 2.0)
+        self.distance_threshold = rospy.get_param('~distance_threshold', 0.33)
 
         # Create a publisher for the waste detection (visualization marker array)
         self.waste_pub = rospy.Publisher('/simulated_waste', MarkerArray, queue_size=1)
@@ -68,9 +69,9 @@ class SimulatedWaste:
         self.start_time = rospy.Time.now()
 
         self.array_lock = threading.Lock()
-        
+
         rospy.on_shutdown(self.shutdown_hook)
-        
+
 
 
     def cleanup(self, event):
@@ -90,7 +91,7 @@ class SimulatedWaste:
                 point = self.tf_listener.transformPoint("base_link", self.waste_positions[i])
                 # compute x, y distance from the base_link
                 distance = (point.point.x**2 + point.point.y**2)**0.5
-                if distance < 0.33:
+                if distance < self.distance_threshold:
                     collected_idx.append(i)
 
             # remove the collected waste positions
@@ -99,14 +100,14 @@ class SimulatedWaste:
 
 
     def publish_waste(self, event):
-    
+
         marker_array = MarkerArray()
         # for i in range(len(self.waste_positions)):
         #     x_offset = random.uniform(-0.1, 0.1)
         #     y_offset = random.uniform(-0.1, 0.1)
         #     self.waste_positions[i] = (self.waste_positions[i][0] + x_offset,
         #                                self.waste_positions[i][1] + y_offset)
-        
+
         # Populate the MarkerArray with simulated waste data
         with self.array_lock:
             for i in range(len(self.waste_positions)):
