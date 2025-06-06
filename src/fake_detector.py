@@ -11,6 +11,8 @@ import cv2
 import yaml
 import numpy as np
 from cv_bridge import CvBridge
+from dynamic_reconfigure.server import Server
+from pimage_utils.cfg import FakeDetectorConfig
 
 
 class FakeDetector:
@@ -20,45 +22,74 @@ class FakeDetector:
         self.image_size = (1224, 1024)  # (width, height)
         # Parameters
         # self.world_frame = rospy.get_param('~world_frame', 'world')
+
         self.robot_frame = rospy.get_param('~robot_frame', 'base_link')
-        self.rate = rospy.get_param('~rate', 2.0)
+        # self.rate = rospy.get_param('~rate', 1.0)
+        self.pixel_noise_radius = rospy.get_param('~pixel_noise_radius', 30)
 
         # Load camera calibration parameters
-        int_path = rospy.get_param('~intrinsics_path')
-        rospy.loginfo(f"Using instrincs from file {int_path}")
-        ext_path = rospy.get_param('~extrinsics_path')
-        rospy.loginfo(f"Using extrinsics from file {ext_path}")
-
-        self.camera_matrix, self.dist_coeffs, self.rvec, self.tvec = self.load_camera_calibration(int_path, ext_path)
-
-        # Prepare fixed projection matrices and values
-        self.R_inv, _ = cv2.Rodrigues(-self.rvec)
-        self.cam_origin_w = -self.R_inv @ self.tvec
-        _, _, self.Z0 = self.cam_origin_w.flatten()
+        self.int_path = rospy.get_param('~intrinsics_path')
+        rospy.loginfo(f"Using instrincs from file {self.int_path}")
+        self.ext_path = rospy.get_param('~extrinsics_path')
+        rospy.loginfo(f"Using extrinsics from file {self.ext_path}")
 
         # Subscribers
         self.waste_sub = rospy.Subscriber('/simulated_waste', MarkerArray, self.waste_callback)
 
         # Publishers
         self.fov_pub = rospy.Publisher('/fov_marker', Marker, queue_size=1)
-        self.point_cloud_pub = rospy.Publisher('/waste_point_cloud', PointCloud2, queue_size=1)
+        self.point_cloud_pub = rospy.Publisher('~detections', PointCloud2, queue_size=1)
         self.annotated_image_pub = rospy.Publisher("~debug_img/image_raw", Image, queue_size=1)
         self.camera_info_pub = rospy.Publisher("~debug_img/camera_info", CameraInfo, queue_size=1)
 
-        # Create a marker template
-        self.fov_marker = self.create_fov_marker()
+        # Initialize paramters
+        self.camera_matrix = None
+        self.dist_coeffs = None
+        self.rvec = None
+        self.tvec = None
+        # self.enable_missing_detection = False
+
+        self.fov_marker = None
+
+        self.dynamic_reconfigure_server = Server(FakeDetectorConfig, self.reconfigure_callback)
+
 
         # Create an array of Stamped points
         self.waste_positions = []
 
         self.bridge = CvBridge()
 
-        self.pixel_noise_radius = rospy.get_param('~pixel_noise_radius', 10)
-
         self.tf_listener = tf.TransformListener()
         rospy.sleep(2.0)  # Allow time for the tf listener to initialize
 
         rospy.on_shutdown(self.shutdown_hook)
+
+    def reconfigure_callback(self, config, level):
+        """ Callback for dynamic reconfigure server """
+        rospy.loginfo("Reconfigure request")
+
+        self.pixel_noise_radius = config['pixel_noise_radius']
+        self.tilt_angle = config['tilt_angle']
+        self.enable_missing_detections = config['enable_missing_detections']
+        self.image_processing_delay = config['image_processing_delay']
+
+        self.update_camera_parameters()
+
+        return config
+
+    def update_camera_parameters(self):
+        self.camera_matrix, self.dist_coeffs, self.rvec, self.tvec = self.load_camera_calibration(self.int_path, self.ext_path)
+
+        rvec_with_tilt = self.rvec.copy()
+        rvec_with_tilt[1] += np.deg2rad(self.tilt_angle)  # Apply tilt angle to the x component of the rotation vector
+
+
+        self.R_inv, _ = cv2.Rodrigues(-rvec_with_tilt)
+        self.cam_origin_w = -self.R_inv @ self.tvec
+        _, _, self.Z0 = self.cam_origin_w.flatten()
+
+        self.create_fov_marker()
+
 
     def create_fov_marker(self):
 
@@ -85,7 +116,6 @@ class FakeDetector:
 
         # Create numpy array with 4 points (shape 5,2,1) with pixel coordinates
         offset = 150
-        # image_points = np.array([[0+offset, 0], [self.image_size[1], 0], [self.image_size[1], self.image_size[0]], [0+offset, self.image_size[0]]], dtype=np.float32)
         image_points = np.array([[[0, offset]],
                                  [[0, self.image_size[1]]],
                                  [[self.image_size[0], self.image_size[1]]],
@@ -100,7 +130,8 @@ class FakeDetector:
         for point in local_points:
             p = Point(point[0], point[1], point[2])
             fov_marker.points.append(p)
-        return fov_marker
+
+        self.fov_marker = fov_marker
 
     def load_camera_calibration(self, intrinsics_path, extrinsics_path):
         """ Load intrinsics and extrics matrices from the configuration files """
@@ -125,7 +156,7 @@ class FakeDetector:
             cv2.circle(image, (int(point[0][0]), int(point[0][1])), self.pixel_noise_radius, (255, 0, 0), 2)
         # Crosshair for noisy positions
         for point in noisy_points:
-            cv2.drawMarker(image, (int(point[0][0]), int(point[0][1])), (173, 127, 168), markerType=cv2.MARKER_CROSS, markerSize=10, thickness=2)
+            cv2.drawMarker(image, (int(point[0][0]), int(point[0][1])), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=15, thickness=3)
 
         image_msg = self.bridge.cv2_to_imgmsg(image, encoding="bgr8")
         image_msg.header.frame_id = self.robot_frame
@@ -153,6 +184,8 @@ class FakeDetector:
 
         robot_points = np.array([[p.point.x, p.point.y, p.point.z] for p in points], dtype=np.float32)
 
+        if len(robot_points) == 0:
+            return []
         robot_points = robot_points[robot_points[:, 0] > 0] # Drop points behind the robot
 
         if len(robot_points) == 0:
@@ -292,8 +325,12 @@ class FakeDetector:
             local_waste_positions.append(self.tf_listener.transformPoint(self.robot_frame, point))
 
         image_points = self.project_to_image(local_waste_positions)
-
-        noisy_image_points = self.add_detection_noise(image_points)
+        if self.enable_missing_detections:
+            detected_points = self.false_negative_filter(local_waste_positions)
+            detected_points = self.project_to_image(detected_points)
+        else:
+            detected_points = image_points
+        noisy_image_points = self.add_detection_noise(detected_points)
 
         self.publish_debug_image(image_points, noisy_image_points)
 
@@ -310,13 +347,13 @@ class FakeDetector:
             stamped_point.header.stamp = stamp
             detections.append(stamped_point)
 
-        # Drop points based on false positive change
-        detections = self.false_negative_filter(detections)
-
         if len(detections) > 0:
             point_cloud = self.stamped_point_to_pcl2(detections)
+
+            rospy.sleep(self.image_processing_delay / 1000.0)
             self.point_cloud_pub.publish(point_cloud)
 
+        self.fov_marker.header.stamp = rospy.Time.now()
         self.fov_pub.publish(self.fov_marker)
 
 

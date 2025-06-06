@@ -5,6 +5,7 @@
     <!-- <remap from="input_image" to="$(arg input_image)" /> -->
     <param name="intrinsics_path" type="string" value="$(find pimage_utils)/config/ost.yaml" />
     <param name="extrinsics_path" type="string" value="$(find pimage_utils)/config/camera_pose.yaml" />
+    <remap from="~detections" to="/waste_detector/detections" />
     <!-- <param name="confidence_thresh" type="double" value="0.5" /> -->
 </node>
 
