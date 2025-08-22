@@ -1,12 +1,18 @@
 <launch>
+    <arg name="pixel_noise_radius" default="30" doc="Pixel noise radius for detection simulation"/>
+    <arg name="enable_missing_detections" default="false" doc="Enable false negative filtering"/>
+    <arg name="image_processing_delay" default="100" doc="Image processing delay in milliseconds"/>
 
+    <node name="fake_detector" pkg="pimage_utils" type="fake_detector.py" output="screen">
+        <remap from="~simulated_waste" to="/simulated_waste"/>
+        <remap from="~fov_marker" to="/fov_marker"/>
+        <remap from="~detections" to="/waste_detector/detections" />
 
-<node name="fake_detector" pkg="pimage_utils" type="fake_detector.py" output="screen">
-    <!-- <remap from="input_image" to="$(arg input_image)" /> -->
-    <param name="intrinsics_path" type="string" value="$(find pimage_utils)/config/ost.yaml" />
-    <param name="extrinsics_path" type="string" value="$(find pimage_utils)/config/camera_pose.yaml" />
-    <remap from="~detections" to="/waste_detector/detections" />
-    <!-- <param name="confidence_thresh" type="double" value="0.5" /> -->
-</node>
+        <param name="intrinsics_path" type="string" value="$(find pimage_utils)/config/ost.yaml" />
+        <param name="extrinsics_path" type="string" value="$(find pimage_utils)/config/camera_pose.yaml" />
+        <param name="pixel_noise_radius" value="$(arg pixel_noise_radius)"/>
+
+        <!-- <param name="confidence_thresh" type="double" value="0.5" /> -->
+    </node>
 
 </launch>

@@ -3,7 +3,7 @@
 import rospy
 from sensor_msgs.msg import PointCloud2, PointField, Image, CameraInfo
 from sensor_msgs import point_cloud2
-from visualization_msgs.msg import Marker, MarkerArray
+from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point, PointStamped
 import random
 import tf
@@ -34,10 +34,10 @@ class FakeDetector:
         rospy.loginfo(f"Using extrinsics from file {self.ext_path}")
 
         # Subscribers
-        self.waste_sub = rospy.Subscriber('/simulated_waste', MarkerArray, self.waste_callback)
+        self.waste_sub = rospy.Subscriber('~simulated_waste', PointCloud2, self.waste_callback)
 
         # Publishers
-        self.fov_pub = rospy.Publisher('/fov_marker', Marker, queue_size=1)
+        self.fov_pub = rospy.Publisher('~fov_marker', Marker, queue_size=1)
         self.point_cloud_pub = rospy.Publisher('~detections', PointCloud2, queue_size=1)
         self.annotated_image_pub = rospy.Publisher("~debug_img/image_raw", Image, queue_size=1)
         self.camera_info_pub = rospy.Publisher("~debug_img/camera_info", CameraInfo, queue_size=1)
@@ -292,26 +292,27 @@ class FakeDetector:
 
     def waste_callback(self, msg):
 
+        # Publish the FOV marker
+        self.fov_marker.header.stamp = rospy.Time.now()
+        self.fov_pub.publish(self.fov_marker)
+
         # Skip if the message is empty
-        if not msg.markers:
+        if msg.width == 0:
             return
 
-        frame_id = msg.markers[0].header.frame_id
-        stamp = msg.markers[0].header.stamp
+        frame_id = msg.header.frame_id
+        stamp = msg.header.stamp
 
-        # Stores a StampedPoint for each waste marker in the array
+        # Extract points from PointCloud2 message
         waste_positions = []
-        for marker in msg.markers:
-            if marker.ns == "waste":
-                # Create a StampedPoint for each marker
-                stamped_point = PointStamped()
-                stamped_point.point.x = marker.pose.position.x
-                stamped_point.point.y = marker.pose.position.y
-                stamped_point.point.z = marker.pose.position.z
-                # Set the header
-                stamped_point.header.frame_id = frame_id
-                stamped_point.header.stamp = stamp
-                waste_positions.append(stamped_point)
+        for point in point_cloud2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True):
+            stamped_point = PointStamped()
+            stamped_point.point.x = point[0]
+            stamped_point.point.y = point[1]
+            stamped_point.point.z = point[2]
+            stamped_point.header.frame_id = frame_id
+            stamped_point.header.stamp = stamp
+            waste_positions.append(stamped_point)
 
         # Convert all the points to the robot frame
         try:
@@ -353,8 +354,7 @@ class FakeDetector:
             rospy.sleep(self.image_processing_delay / 1000.0)
             self.point_cloud_pub.publish(point_cloud)
 
-        self.fov_marker.header.stamp = rospy.Time.now()
-        self.fov_pub.publish(self.fov_marker)
+
 
 
     def shutdown_hook(self):

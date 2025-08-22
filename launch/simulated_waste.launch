@@ -1,0 +1,22 @@
+<launch>
+  <!-- Launch file arguments -->
+  <arg name="frame_id" default="world" doc="Frame ID for the simulated waste"/>
+  <arg name="rate" default="2.0" doc="Publishing rate in Hz"/>
+  <arg name="distance_threshold" default="0.33" doc="Distance threshold for waste cleanup"/>
+  <arg name="clean_waste_positions" default="true" doc="Enable automatic waste removal when robot gets close"/>
+  <arg name="config_file" default="empty.yaml" doc="YAML configuration file with waste positions"/>
+
+  <!-- Simulated waste node -->
+  <node name="simulated_waste" pkg="pimage_utils" type="simulated_waste.py" output="screen">
+    <!-- Node parameters -->
+    <remap from="~point" to="/next_point"/>
+    <remap from="~simulated_waste" to="/simulated_waste"/>
+
+    <param name="frame_id" value="$(arg frame_id)"/>
+    <param name="rate" value="$(arg rate)"/>
+    <param name="distance_threshold" value="$(arg distance_threshold)"/>
+    <param name="clean_waste_positions" value="$(arg clean_waste_positions)"/>
+    <param name="config_file" value="$(arg config_file)"/>
+  </node>
+
+</launch>
