@@ -2,13 +2,13 @@
 
 import rospy
 import rospkg
-import tf
+import tf2_ros
+import tf2_geometry_msgs
 import yaml
 from geometry_msgs.msg import PointStamped
 from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs import point_cloud2
 import threading
-
 
 class SimulatedWaste:
     def __init__(self):
@@ -24,15 +24,12 @@ class SimulatedWaste:
         self.point_sub = rospy.Subscriber('~point', PointStamped, self.point_callback)
 
         rospack = rospkg.RosPack()
-
-
         waypoints_file = rospy.get_param('~config_file', 'empty.yaml')
         file_path = rospack.get_path('kingfisher_experiments') + '/config/' + waypoints_file
         self.waste_points, self.frame_id = self.load_yaml_config(file_path)
         print(f"Loaded waste points: \n {self.waste_points} \n from {file_path} with frame_id {self.frame_id}")
 
         self.waste_positions = []
-
         for point in self.waste_points:
             stamped_point = PointStamped()
             stamped_point.header.frame_id = self.frame_id
@@ -59,13 +56,12 @@ class SimulatedWaste:
             [point.point.x, point.point.y, point.point.z]
             for point in self.waste_positions
         ]
-
         self.cloud_msg = point_cloud2.create_cloud_xyz32(self.point_cloud.header, points)
 
+        # Create a tf2 buffer and listener
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
-        # Create a tf buffer and listener
-        self.tf_listener = tf.TransformListener()
-        # 1s delay to allow the tf listener to initialize
         rospy.sleep(1.0)
 
         period = 1.0 / self.rate
@@ -99,32 +95,36 @@ class SimulatedWaste:
         print(f"Received point: {msg.point.x}, {msg.point.y}, {msg.point.z}")
         try:
             # Transform the received point to the world frame
-            self.tf_listener.waitForTransform("world", msg.header.frame_id, msg.header.stamp, rospy.Duration(1.0))
-            world_point = self.tf_listener.transformPoint("world", msg)
+            transform = self.tf_buffer.lookup_transform("world", msg.header.frame_id, rospy.Time(0), rospy.Duration(1.0))
+            world_point = tf2_geometry_msgs.do_transform_point(msg, transform)
             with self.array_lock:
                 self.waste_positions = [world_point]
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
-            rospy.logwarn("TF transform unavailable: %s", e)
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+            rospy.logerror("Transform unavailable: %s", e)
 
     def cleanup(self, event):
 
         if self.clean_waste_positions is False:
             return
 
-        desired_time = rospy.Time.now() # TODO: improve
+        desired_time = rospy.Time.now()
         try:
-            self.tf_listener.waitForTransform(self.frame_id, "base_link", desired_time, rospy.Duration(1.0))
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
-            rospy.logwarn("TF transform unavailable: %s", e)
-            pass
+            # Transform waste positions to base_link using tf2
+            transform = self.tf_buffer.lookup_transform("base_link", self.frame_id, rospy.Time(0), rospy.Duration(1.0))
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+            rospy.logwarn("TF2 transform unavailable: %s", e)
+            return
 
         collected_idx = []
         with self.array_lock:
             for i in range(len(self.waste_positions)):
                 # Transform the waste positions to the base_link frame
                 self.waste_positions[i].header.stamp = desired_time
-                point = self.tf_listener.transformPoint("base_link", self.waste_positions[i])
-                # compute x, y distance from the base_link
+                try:
+                    point = tf2_geometry_msgs.do_transform_point(self.waste_positions[i], transform)
+                except Exception as e:
+                    rospy.logwarn("TF2 transform failed: %s", e)
+                    continue
                 distance = (point.point.x**2 + point.point.y**2)**0.5
                 if distance < self.distance_threshold:
                     collected_idx.append(i)

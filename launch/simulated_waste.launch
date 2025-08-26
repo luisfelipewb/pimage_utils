@@ -2,7 +2,7 @@
   <!-- Launch file arguments -->
   <arg name="frame_id" default="world" doc="Frame ID for the simulated waste"/>
   <arg name="rate" default="2.0" doc="Publishing rate in Hz"/>
-  <arg name="distance_threshold" default="0.33" doc="Distance threshold for waste cleanup"/>
+  <arg name="distance_threshold" default="0.30" doc="Distance threshold for waste cleanup"/>
   <arg name="clean_waste_positions" default="true" doc="Enable automatic waste removal when robot gets close"/>
   <arg name="config_file" default="empty.yaml" doc="YAML configuration file with waste positions"/>
 
