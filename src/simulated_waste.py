@@ -139,6 +139,7 @@ class SimulatedWaste:
         # Populate point cloud with simulated waste data
         with self.array_lock:
             self.point_cloud = PointCloud2()
+            self.point_cloud.header.stamp = rospy.Time.now()
             self.point_cloud.header.frame_id = "world"
             self.point_cloud.height = 1
             self.point_cloud.width = len(self.waste_positions)
