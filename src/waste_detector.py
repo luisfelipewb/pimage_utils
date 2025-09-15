@@ -95,7 +95,7 @@ class WasteDetector:
                 self.host_outputs.append(host_mem)
                 self.cuda_outputs.append(cuda_mem)
         rospy.logdebug("Buffers created")
-        
+
         self.stream = cuda.Stream()
         self.context = engine.create_execution_context()
 
@@ -106,7 +106,7 @@ class WasteDetector:
             intrinsics = yaml.safe_load(f)
         with open(extrinsics_path, 'r') as f:
             extrinsics = yaml.safe_load(f)
-        
+
         camera_matrix = np.array(intrinsics['camera_matrix']['data']).reshape(3,3)
         dist_coeffs = np.array(intrinsics['distortion_coefficients']['data']).reshape(1,5)
         rvec = np.array(extrinsics['rvec'])
@@ -131,7 +131,7 @@ class WasteDetector:
     def run_inference(self, img_input):
         """Run inference on the input image."""
         np.copyto(self.host_inputs[0], img_input.ravel())
-        
+
         start_time = time.time()
         cuda.memcpy_htod_async(self.cuda_inputs[0], self.host_inputs[0], self.stream)
         self.stream.synchronize()
@@ -155,7 +155,7 @@ class WasteDetector:
         x2 = x + w / 2
         y2 = y + h / 2
         return np.column_stack([x1, y1, x2, y2, boxes[:, 4]])
-    
+
     def postprocess_output(self, output, image_size=(1024, 1224)):
         """ Postprocess the raw model output to get bounding boxes."""
 
@@ -179,22 +179,22 @@ class WasteDetector:
         XcYcWH_boxes = original_boxes[indices]
         XYXY_boxes = converted_boxes[indices]
 
-        
+
         return XcYcWH_boxes, XYXY_boxes
-    
+
     def draw_boxes_on_image(self, img, XcYcWH_boxes, XYXY_boxes, color=(0, 255, 0), marker_color=(0, 0, 255)):
         for box in XYXY_boxes:
             # Draw bounding box
             x1, y1, x2, y2 = box[:4]
             cv2.rectangle(img, (int(x1), int(y1)), (int(x2), int(y2)), color, 1)
-            
+
         for box in XcYcWH_boxes:
             # Draw center
             xc, yc = box[:2]
             cv2.drawMarker(img, (int(xc), int(yc)), marker_color, markerType=cv2.MARKER_CROSS, markerSize=30, thickness=3)
-            
+
         return img
-    
+
     def project_to_world(self, uv_points):
         """ Project from u,v pixel coordinates to x,y,0 point in the robot frame """
 
@@ -218,9 +218,9 @@ class WasteDetector:
                 intersection_point = self.cam_origin_w + t * ray_direction_w
                 world_coordinates.append(intersection_point.flatten())
         return world_coordinates
-    
+
     def publish_pointcloud(self, points, header):
-        
+
         # Hardcoded and must match the extrinsics calibration
         header_pc = Header()
         header_pc.seq = header.seq
@@ -230,13 +230,21 @@ class WasteDetector:
         point_list = [(p[0], p[1], p[2]) for p in points]
         cloud_msg = pc2.create_cloud_xyz32(header_pc, point_list)
 
+        # print(f"pcl_header_timestamp: {header_pc.stamp.to_sec()}\n")
+        # print(f"pcl_pub_timestamp: {rospy.Time.now().to_sec()}")
+        # print(f"total_process_time: {(rospy.Time.now() - header.stamp).to_sec()}")
         self.detected_points_pub.publish(cloud_msg)
 
     def image_callback(self, msg):
         # rospy.logdebug('image_callback: Received image')
         # Preprocess image
+
+        # start_time = rospy.Time.now()
+        # print(f"dif_rcv_timestamp: {start_time.to_sec()}")
         img = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
         img_input = self.preprocess_image(img)
+        # end_time = rospy.Time.now()
+        # print(f"preprocess_time: {(end_time - start_time).to_sec()}")
 
         acquired = self.lock.acquire(timeout=0.1)
         if not acquired:
@@ -262,6 +270,8 @@ class WasteDetector:
                 img_header = self.img_header
                 img = self.img
 
+            # start_time = rospy.Time.now()
+            # print(f"start_inference_timestamp: {start_time.to_sec()}")
             inference_output = self.run_inference(img_input)
 
             # Threshold detections and NMS
@@ -271,7 +281,11 @@ class WasteDetector:
             # rospy.logdebug(f"Detected {num_detections} objects")
 
             center_positions = XcYcWH_boxes[:,:2] # get only XcYc positions
+            # mid_time = rospy.Time.now()
+            # print(f"inference_time: {(mid_time - start_time).to_sec()}")
             coordinates = self.project_to_world(center_positions)
+            # end_time = rospy.Time.now()
+            # print(f"projection_time: {(end_time - mid_time).to_sec()}")
             self.publish_pointcloud(coordinates, img_header)
 
             if self.annotated_image_pub.get_num_connections() > 0:

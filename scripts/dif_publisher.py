@@ -13,9 +13,9 @@ import os
 
 class ImageProcessor:
     def __init__(self):
-        
+
         self.bridge = CvBridge()
-    
+
         rospack = rospkg.RosPack()
         package_path = rospack.get_path('pimage_utils')
         config_file_path = os.path.join(package_path, 'config/ost.yaml')
@@ -51,16 +51,23 @@ class ImageProcessor:
 
     def image_callback(self, msg):
 
+        # start_time = rospy.Time.now()
+        # print(f"raw_header_timestamp: {msg.header.stamp.to_sec()}")
+        # print(f"raw_rcv_timestamp: {start_time.to_sec()}")
+        # print(f"acquisition_time: {(start_time - msg.header.stamp).to_sec()}")
         img_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
 
         img_dif = pi.extractDif(img_raw)
 
         processed_image_msg = self.bridge.cv2_to_imgmsg(img_dif, encoding='bgr8')
-        
+
         processed_image_msg.header = msg.header
         self.camera_info_msg.header = msg.header
 
         self.camera_info_pub.publish(self.camera_info_msg)
+        # end_time = rospy.Time.now()
+        # print(f"extraction_time: {(end_time - start_time).to_sec()}")
+        # print(f"dif_pub_timestamp: {end_time.to_sec()}")
         self.image_pub.publish(processed_image_msg)
 
     def run(self):
