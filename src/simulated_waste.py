@@ -36,7 +36,7 @@ class SimulatedWaste:
             stamped_point.header.stamp = rospy.Time.now()
             stamped_point.point.x = point[0]
             stamped_point.point.y = point[1]
-            stamped_point.point.z = 0.0
+            stamped_point.point.z = 11.80
             self.waste_positions.append(stamped_point)
         print(f"Simulated waste positions: {len(self.waste_positions)}")
 
